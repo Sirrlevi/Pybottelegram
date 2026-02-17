@@ -1,3 +1,3 @@
 pyTelegramBotAPI==4.22.1
 python-dotenv==1.0.1
-openai==1.51.0   # ye xAI/Grok API ke liye compatible hai
+openai>=1.56.1   # ya exact: openai==1.58.1 (latest as of early 2026)
