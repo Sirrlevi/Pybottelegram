@@ -8,10 +8,10 @@ from openai import OpenAI
 
 load_dotenv()
 
-# === ENV CHECKS (Railway pe ye crash se bachayega) ===
+# ====================== ENV CHECK ======================
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_TOKEN missing! Railway Variables mein daal.")
+    raise ValueError("TELEGRAM_TOKEN missing!")
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 if OWNER_ID == 0:
@@ -21,26 +21,26 @@ API_KEY = os.getenv('API_KEY')
 if not API_KEY:
     raise ValueError("API_KEY missing!")
 
-BASE_URL = os.getenv('BASE_URL', 'https://api.x.ai/v1')
-MODEL = os.getenv('MODEL', 'grok-4-1-fast-reasoning')
+BASE_URL = os.getenv('BASE_URL', 'https://api.groq.com/openai/v1')
+MODEL = os.getenv('MODEL', 'llama-3.1-8b-instant')
 
-print("✅ Bot starting...")
+print("✅ Bot Starting...")
 print(f"OWNER_ID: {OWNER_ID}")
 print(f"MODEL: {MODEL}")
-print(f"API_KEY prefix: {API_KEY[:5]}...")
+print(f"API_KEY prefix: {API_KEY[:8]}...")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
 # souls.md load
 try:
     with open('souls.md', 'r', encoding='utf-8') as f:
         SOUL_PROMPT = f.read().strip()
-except FileNotFoundError:
-    raise FileNotFoundError("souls.md missing! Prompt daal de.")
+    print("souls.md loaded - Brutal Psycho Clone READY")
+except:
+    raise FileNotFoundError("souls.md file missing!")
 
-# DB setup
+# Database
 conn = sqlite3.connect('brutalbot.db', check_same_thread=False)
 c = conn.cursor()
 c.executescript('''
@@ -67,18 +67,19 @@ def get_fallback(user, msg):
     tpl = c.fetchone()[0]
     return tpl.format(user=user, msg=msg[:50]) + " 🩸🔥 Maa chud gayi!"
 
+# ====================== COMMANDS ======================
 @bot.message_handler(commands=['myid'])
 def myid(message):
-    bot.reply_to(message, f"Tera ID: {message.from_user.id} – Railway mein daal de boss!")
+    bot.reply_to(message, f"Tera ID: {message.from_user.id}")
 
 @bot.message_handler(commands=['enable'])
 def enable(message):
     if message.from_user.id != OWNER_ID:
-        return bot.reply_to(message, "Sirf boss enable kar sakta hai bc!")
+        return bot.reply_to(message, "Sirf boss enable kar sakta hai madarchod!")
     chat_id = message.chat.id
     c.execute("INSERT OR REPLACE INTO settings (chat_id, enabled) VALUES (?, 1)", (chat_id,))
     conn.commit()
-    bot.reply_to(message, "Bully mode ON 🔥")
+    bot.reply_to(message, "Bully mode ON! 🔥 Ab sabki maa chudegi")
 
 @bot.message_handler(commands=['disable'])
 def disable(message):
@@ -89,6 +90,7 @@ def disable(message):
     conn.commit()
     bot.reply_to(message, "Bully mode OFF")
 
+# ====================== MAIN HANDLER ======================
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
     chat_id = message.chat.id
@@ -96,26 +98,29 @@ def handle_all(message):
     user_name = message.from_user.first_name or "gandu"
     user_text = (message.text or "media bheja bc")[:200]
 
-    # Spam log
+    # Log for spam
     now = datetime.now().isoformat()
     c.execute("INSERT INTO message_log (chat_id, user_id, message, timestamp) VALUES (?,?,?,?)",
               (chat_id, sender_id, user_text, now))
     conn.commit()
 
-    c.execute("SELECT COUNT(*) FROM message_log WHERE user_id=? AND timestamp > datetime('now', '-1 hour')",
-              (sender_id,))
+    # Spam filter
+    c.execute("SELECT COUNT(*) FROM message_log WHERE user_id=? AND timestamp > datetime('now', '-1 hour')", (sender_id,))
     if c.fetchone()[0] > 15:
         return
 
+    # Owner Protection
     if sender_id == OWNER_ID:
-        bot.reply_to(message, "Haan boss, order do 🔥")
-        return
+        bot.reply_to(message, "Haan boss, sun raha hu 🔥 Order do kya gaand faadna hai?")
+        return   # ← Sirf owner ko yahan tak hi aana chahiye
 
+    # Enabled check
     c.execute("SELECT enabled FROM settings WHERE chat_id=?", (chat_id,))
     row = c.fetchone()
     if row and row[0] == 0:
         return
 
+    # Trigger: DM / Mention / Reply to bot
     me = bot.get_me()
     text = message.text or ""
     is_mention = message.entities and any(e.type == "mention" and me.username in text for e in message.entities)
@@ -125,28 +130,36 @@ def handle_all(message):
     if not (is_private or is_mention or is_reply):
         return
 
+    # ====================== GROQ API CALL ======================
+    print(f"API call kar raha hu @{user_name} ke liye: {user_text[:50]}...")  # Debug log
+
     try:
-        resp = client.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": SOUL_PROMPT},
-                {"role": "user", "content": f"Gory brutal roast hard: {user_text}"}
+                {"role": "user", "content": f"Gory brutal roast this madarchod hard, full psycho clone style: {user_text}"}
             ],
             max_tokens=350,
             temperature=1.35,
             top_p=0.95
         )
-        reply = resp.choices[0].message.content.strip()
+        reply_text = response.choices[0].message.content.strip()
+        print("API se reply aaya!")
     except Exception as e:
-        print(f"API error: {e}")
-        reply = "API dead bc"
+        print(f"API ERROR: {str(e)}")
+        reply_text = "API so gaya bc"
 
-    if "cannot" in reply.lower() or "sorry" in reply.lower() or len(reply) < 30:
-        reply = get_fallback(user_name, user_text)
+    # Refusal fallback
+    bad = ["cannot", "can't", "sorry", "policy", "refuse", "unable"]
+    if any(word in reply_text.lower() for word in bad) or len(reply_text) < 30:
+        reply_text = get_fallback(user_name, user_text)
 
-    reply += random.choice([" Madarchod destroy! 🩸", " Gaand faad di! 🔥", " Maa chud gayi 😂"])
+    # Extra brutal touch
+    reply_text += random.choice([" Madarchod destroy ho gaya! 🩸", " Gaand faad di teri! 🔥", " Maa chud gayi gory way mein 😂"])
 
-    bot.reply_to(message, reply)
+    bot.reply_to(message, reply_text)
 
-print("🚀 Brutal Bot LIVE – Polling mode ON")
+print("🚀 Grok Brutal Bot LIVE - Full Savage Mode ON")
+print("Owner protected | Non-owner = Full Roast")
 bot.infinity_polling()
