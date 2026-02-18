@@ -6,29 +6,28 @@ from dotenv import load_dotenv
 import telebot
 from openai import OpenAI
 
-# Load env (local ke liye), Railway pe dashboard se variables set hain
 load_dotenv()
 
-# === ENV VARS CHECK ===
+# === ENV CHECKS (Railway pe ye crash se bachayega) ===
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_TOKEN missing! Railway Variables tab mein daal de bhai.")
+    raise ValueError("TELEGRAM_TOKEN missing! Railway Variables mein daal.")
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 if OWNER_ID == 0:
-    raise ValueError("OWNER_ID missing! Apna Telegram ID daal.")
+    raise ValueError("OWNER_ID missing!")
 
 API_KEY = os.getenv('API_KEY')
 if not API_KEY:
-    raise ValueError("API_KEY missing! xAI console se leke daal.")
+    raise ValueError("API_KEY missing!")
 
 BASE_URL = os.getenv('BASE_URL', 'https://api.x.ai/v1')
 MODEL = os.getenv('MODEL', 'grok-4-1-fast-reasoning')
 
 print("✅ Bot starting...")
-print(f"   OWNER_ID: {OWNER_ID}")
-print(f"   MODEL: {MODEL}")
-print(f"   API_KEY starts with: {API_KEY[:5]}...")
+print(f"OWNER_ID: {OWNER_ID}")
+print(f"MODEL: {MODEL}")
+print(f"API_KEY prefix: {API_KEY[:5]}...")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -39,9 +38,9 @@ try:
     with open('souls.md', 'r', encoding='utf-8') as f:
         SOUL_PROMPT = f.read().strip()
 except FileNotFoundError:
-    raise FileNotFoundError("souls.md file missing! Psycho clone prompt daal de.")
+    raise FileNotFoundError("souls.md missing! Prompt daal de.")
 
-# Database setup
+# DB setup
 conn = sqlite3.connect('brutalbot.db', check_same_thread=False)
 c = conn.cursor()
 c.executescript('''
@@ -51,7 +50,7 @@ CREATE TABLE IF NOT EXISTS message_log (id INTEGER PRIMARY KEY, chat_id INTEGER,
 ''')
 conn.commit()
 
-# Gory brutal fallbacks
+# Gory fallbacks
 fallbacks = [
     "Arre {user} madarchod, {msg} bol raha hai jaise teri maa khoon ugal rahi ho aur tu lauda choos raha 😂 Gaand faad dunga teri!",
     "{user} chutiye, {msg} sunke teri behen ko 10 laude padne ka mann kar raha. Khoon nikalega tera aaj!",
@@ -66,20 +65,20 @@ conn.commit()
 def get_fallback(user, msg):
     c.execute("SELECT template FROM fallbacks ORDER BY RANDOM() LIMIT 1")
     tpl = c.fetchone()[0]
-    return tpl.format(user=user, msg=msg[:50]) + " 🩸🔥 Maa chud gayi bhenchod!"
+    return tpl.format(user=user, msg=msg[:50]) + " 🩸🔥 Maa chud gayi!"
 
 @bot.message_handler(commands=['myid'])
 def myid(message):
-    bot.reply_to(message, f"Tera ID: {message.from_user.id} – Railway env mein daal de boss!")
+    bot.reply_to(message, f"Tera ID: {message.from_user.id} – Railway mein daal de boss!")
 
 @bot.message_handler(commands=['enable'])
 def enable(message):
     if message.from_user.id != OWNER_ID:
-        return bot.reply_to(message, "Sirf boss (Carno) enable kar sakta hai madarchod!")
+        return bot.reply_to(message, "Sirf boss enable kar sakta hai bc!")
     chat_id = message.chat.id
     c.execute("INSERT OR REPLACE INTO settings (chat_id, enabled) VALUES (?, 1)", (chat_id,))
     conn.commit()
-    bot.reply_to(message, "Bully mode ON! 🔥 Ab sabki maa chudegi")
+    bot.reply_to(message, "Bully mode ON 🔥")
 
 @bot.message_handler(commands=['disable'])
 def disable(message):
@@ -88,82 +87,66 @@ def disable(message):
     chat_id = message.chat.id
     c.execute("INSERT OR REPLACE INTO settings (chat_id, enabled) VALUES (?, 0)", (chat_id,))
     conn.commit()
-    bot.reply_to(message, "Bully mode OFF ho gaya")
+    bot.reply_to(message, "Bully mode OFF")
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
     chat_id = message.chat.id
     sender_id = message.from_user.id
     user_name = message.from_user.first_name or "gandu"
-    user_text = (message.text or "media/sticker bheja bc")[:200]
+    user_text = (message.text or "media bheja bc")[:200]
 
-    # Log for spam
+    # Spam log
     now = datetime.now().isoformat()
     c.execute("INSERT INTO message_log (chat_id, user_id, message, timestamp) VALUES (?,?,?,?)",
               (chat_id, sender_id, user_text, now))
     conn.commit()
 
-    # Spam filter
     c.execute("SELECT COUNT(*) FROM message_log WHERE user_id=? AND timestamp > datetime('now', '-1 hour')",
               (sender_id,))
     if c.fetchone()[0] > 15:
         return
 
-    # Owner ko respect
     if sender_id == OWNER_ID:
-        bot.reply_to(message, "Haan baapji, bol kya gaand faadne ka order hai? 🔥")
+        bot.reply_to(message, "Haan boss, order do 🔥")
         return
 
-    # Enabled check
     c.execute("SELECT enabled FROM settings WHERE chat_id=?", (chat_id,))
     row = c.fetchone()
     if row and row[0] == 0:
         return
 
-    # Trigger only DM / mention / reply to bot
     me = bot.get_me()
     text = message.text or ""
-    is_mention = message.entities and any(
-        e.type == "mention" and me.username and me.username in text for e in message.entities
-    )
+    is_mention = message.entities and any(e.type == "mention" and me.username in text for e in message.entities)
     is_reply = message.reply_to_message and message.reply_to_message.from_user.id == me.id
     is_private = message.chat.type == "private"
 
     if not (is_private or is_mention or is_reply):
         return
 
-    # Grok API call
     try:
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": SOUL_PROMPT},
-                {"role": "user", "content": f"Gory brutal roast this madarchod hard, full psycho clone style: {user_text}"}
+                {"role": "user", "content": f"Gory brutal roast hard: {user_text}"}
             ],
             max_tokens=350,
             temperature=1.35,
             top_p=0.95
         )
-        reply_text = response.choices[0].message.content.strip()
+        reply = resp.choices[0].message.content.strip()
     except Exception as e:
-        print(f"API error: {str(e)}")
-        reply_text = "API so gaya bc"
+        print(f"API error: {e}")
+        reply = "API dead bc"
 
-    # Refusal fallback
-    bad_phrases = ["cannot", "can't", "sorry", "policy", "refuse", "unable", "i won't", "against guidelines"]
-    if any(phrase in reply_text.lower() for phrase in bad_phrases) or len(reply_text) < 30:
-        reply_text = get_fallback(user_name, user_text)
+    if "cannot" in reply.lower() or "sorry" in reply.lower() or len(reply) < 30:
+        reply = get_fallback(user_name, user_text)
 
-    # Extra savage
-    reply_text += random.choice([
-        " Madarchod destroy ho gaya! 🩸",
-        " Gaand faad di teri! 🔥",
-        " Maa chud gayi gory way mein 😂",
-        " Khoon nikal gaya randi ke! ⚔️"
-    ])
+    reply += random.choice([" Madarchod destroy! 🩸", " Gaand faad di! 🔥", " Maa chud gayi 😂"])
 
-    bot.reply_to(message, reply_text)
+    bot.reply_to(message, reply)
 
-print("🚀 Grok Brutal Psycho Clone Bot LIVE – Worker mode ON")
-print("Polling started... Sabki maa chudne ka time aa gaya!")
+print("🚀 Brutal Bot LIVE – Polling mode ON")
 bot.infinity_polling()
