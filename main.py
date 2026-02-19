@@ -1,27 +1,27 @@
 import os
 import random
 import sqlite3
+import requests
 from datetime import datetime
 from dotenv import load_dotenv
 import telebot
-from openai import OpenAI
 
 load_dotenv()
 
 # ====================== ENV CHECK ======================
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_TOKEN missing! Railway Variables mein daal.")
+    raise ValueError("TELEGRAM_TOKEN missing!")
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))
 if OWNER_ID == 0:
-    raise ValueError("OWNER_ID missing! Apna ID daal.")
+    raise ValueError("OWNER_ID missing!")
 
 API_KEY = os.getenv('API_KEY')
 if not API_KEY:
-    raise ValueError("API_KEY missing! Groq se le.")
+    raise ValueError("API_KEY missing!")
 
-BASE_URL = os.getenv('BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')  # trailing slash hata diya
+BASE_URL = os.getenv('BASE_URL', 'https://api.groq.com/openai/v1').rstrip('/')
 MODEL = os.getenv('MODEL', 'llama-3.1-8b-instant')
 
 print("✅ Bot Starting...")
@@ -31,7 +31,6 @@ print(f"API_KEY prefix: {API_KEY[:8]}...")
 print(f"BASE_URL (fixed): {BASE_URL}")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
 # souls.md load
 try:
@@ -39,7 +38,7 @@ try:
         SOUL_PROMPT = f.read().strip()
     print("souls.md loaded - Brutal Psycho Clone READY")
 except:
-    raise FileNotFoundError("souls.md file missing! Prompt daal de.")
+    raise FileNotFoundError("souls.md missing!")
 
 # Database
 conn = sqlite3.connect('brutalbot.db', check_same_thread=False)
@@ -71,7 +70,7 @@ def get_fallback(user, msg):
 # Commands
 @bot.message_handler(commands=['myid'])
 def myid(message):
-    bot.reply_to(message, f"Tera ID: {message.from_user.id} – env mein daal de boss!")
+    bot.reply_to(message, f"Tera ID: {message.from_user.id}")
 
 @bot.message_handler(commands=['enable'])
 def enable(message):
@@ -80,7 +79,7 @@ def enable(message):
     chat_id = message.chat.id
     c.execute("INSERT OR REPLACE INTO settings (chat_id, enabled) VALUES (?, 1)", (chat_id,))
     conn.commit()
-    bot.reply_to(message, "Bully mode ON! 🔥 Ab sabki maa chudegi")
+    bot.reply_to(message, "Bully mode ON! 🔥")
 
 @bot.message_handler(commands=['disable'])
 def disable(message):
@@ -89,42 +88,34 @@ def disable(message):
     chat_id = message.chat.id
     c.execute("INSERT OR REPLACE INTO settings (chat_id, enabled) VALUES (?, 0)", (chat_id,))
     conn.commit()
-    bot.reply_to(message, "Bully mode OFF ho gaya")
+    bot.reply_to(message, "Bully mode OFF")
 
-# Main handler
+# ====================== MAIN HANDLER ======================
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
     chat_id = message.chat.id
     sender_id = message.from_user.id
     user_name = message.from_user.first_name or "gandu"
-    user_text = (message.text or "media/sticker bheja bc")[:200]
+    user_text = (message.text or "media bheja bc")[:200]
 
-    # Log for spam
     now = datetime.now().isoformat()
     c.execute("INSERT INTO message_log (chat_id, user_id, message, timestamp) VALUES (?,?,?,?)",
               (chat_id, sender_id, user_text, now))
     conn.commit()
 
-    # Spam filter
     c.execute("SELECT COUNT(*) FROM message_log WHERE user_id=? AND timestamp > datetime('now', '-1 hour')", (sender_id,))
     if c.fetchone()[0] > 15:
-        print(f"Spam filter: @{user_name} ignored")
         return
 
-    # Owner protection
     if sender_id == OWNER_ID:
         bot.reply_to(message, "Haan boss, sun raha hu 🔥 Order do kya gaand faadna hai?")
-        print(f"Owner message: {user_text[:50]}... → Respect reply")
         return
 
-    # Enabled check
     c.execute("SELECT enabled FROM settings WHERE chat_id=?", (chat_id,))
     row = c.fetchone()
     if row and row[0] == 0:
-        print(f"Chat disabled: {chat_id}")
         return
 
-    # Trigger: DM / Mention / Reply to bot
     me = bot.get_me()
     text = message.text or ""
     is_mention = message.entities and any(e.type == "mention" and me.username and me.username in text for e in message.entities)
@@ -132,34 +123,37 @@ def handle_all(message):
     is_private = message.chat.type == "private"
 
     if not (is_private or is_mention or is_reply):
-        print("Trigger nahi mila – ignore")
         return
 
     print(f"API call kar raha hu @{user_name} ke liye: {user_text[:50]}...")
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": MODEL,
+            "messages": [
                 {"role": "system", "content": SOUL_PROMPT},
                 {"role": "user", "content": f"Gory brutal roast this madarchod hard, full psycho clone style: {user_text}"}
             ],
-            max_tokens=350,
-            temperature=1.35,
-            top_p=0.95
-        )
-        reply_text = response.choices[0].message.content.strip()
+            "max_tokens": 350,
+            "temperature": 1.35,
+            "top_p": 0.95
+        }
+        response = requests.post(f"{BASE_URL}/chat/completions", json=payload, headers=headers)
+        response.raise_for_status()
+        reply_text = response.json()['choices'][0]['message']['content'].strip()
         print("API se reply aaya!")
     except Exception as e:
         print(f"API ERROR: {str(e)}")
         reply_text = "API so gaya bc"
 
-    # Refusal fallback
     bad_phrases = ["cannot", "can't", "sorry", "policy", "refuse", "unable", "i won't", "against guidelines"]
     if any(phrase in reply_text.lower() for phrase in bad_phrases) or len(reply_text) < 30:
         reply_text = get_fallback(user_name, user_text)
 
-    # Extra savage
     reply_text += random.choice([
         " Madarchod destroy ho gaya! 🩸",
         " Gaand faad di teri bhenchod! 🔥",
