@@ -22,7 +22,7 @@ if not GROK_API_KEY:
 # Grok client (xAI OpenAI-compatible endpoint)
 client = OpenAI(
     api_key=GROK_API_KEY,
-    base_url="https://api.x.ai/v1",
+    base_url="moonshotai/kimi-k2-instruct-0905",
 )
 
 bot = Bot(token=BOT_TOKEN)
